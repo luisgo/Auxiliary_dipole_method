@@ -1,0 +1,156 @@
+clear all
+%%example setup parameters
+mu0=1.25663706*10^-6;
+eps0=8.85418782*10^-12;
+dadt=6.664324407237550e+07;%coil current 
+N=[17,17,2]% the number of dipoles along x,y and z 17 by 17 by 2 is recommended (see publication
+%for futher guidance)
+FEMord=1;% order of the numerical approximation suggested 1 or 2 
+th_hair=.05;%hair thickness or distance of coil from scalp
+scth=.05;%width of the square desired scalp coil position search space
+load example1.mat p te2p conductivity;
+%load input data structures and make turn conducitivity into a tensor conductivity
+%generate coil
+subplot(1,2,1),
+[rs ks]=genfig8(.056/2,.087/2,.006,9);%magstim specs
+axis equal
+rs=rs';ks=ks';
+%turn conductivity into conductivity tensor
+[~,conductivity]=ndgrid(1:9,conductivity(:));
+conductivity([2,3,4,6,7,8],:)=0;
+%generate ROI
+roictr=[0 0 .07];
+roirad=.005;
+[x y z]=ndgrid(0:pi/50:2*pi,0:pi/50:pi,0:roirad/50:roirad);
+xp=z(:).*cos(x(:)).*sin(y(:))+roictr(1);
+yp=z(:).*sin(x(:)).*sin(y(:))+roictr(2);
+zp=z(:).*cos(y(:))+roictr(3);
+clear x y z
+TR=triangulation(te2p',p');
+teid=pointLocation(TR,xp,yp,zp);
+teid=unique(teid);
+clear xp yp zp;
+that=zeros([3 numel(teid)]);
+that(2,:)=1;
+
+tri=surftri(p',te2p');
+ROItri=surftri(p',te2p(:,teid)');
+subplot(1,2,2),
+trisurf(tri,p(1,:)',p(2,:)',p(3,:)','edgealpha',0,'facealpha',.4,'facecolor','blue')
+hold on
+trisurf(ROItri,p(1,:)',p(2,:)',p(3,:)','edgealpha',0,'facealpha',1,'facecolor','red')
+axis equal
+%% run ADM code for E dot that
+[tri,pp,E_aux,Anor]=genrecipmapks(te2p,p,conductivity,teid,that,rs,ks,dadt,scth,th_hair,N,FEMord);
+
+%plot results
+[Emag,I]=max(E_aux);
+trisurf(tri,pp(:,1),pp(:,2),pp(:,3),Emag,'edgealpha',0);
+nc=numel(pp)/3;
+Orientations=ones([3 nc]);
+Positions=ones([3 nc]);
+for i=1:nc
+Orientations(:,i)=Anor(1:3,1,i)*sin(I(i)*pi/180)+Anor(1:3,2,i)*cos(I(i)*pi/180);
+Positions(:,i)=Anor(1:3,4,i);
+
+end
+Orientations=Orientations';Positions=Positions';
+hold on
+quiver3(Positions(:,1),Positions(:,2),Positions(:,3),Orientations(:,1),Orientations(:,2),Orientations(:,3))
+axis equal
+legend('Average E-field along ROI', 'Optimum coil orientation')
+
+%% run direct code for a single coil position and orientation
+%choose scalp position from the patch in derived using ADM
+coilposid=4;
+ang=I(coilposid);
+%move coil to patch position using matrix Anor obtained from running ADM
+rs2(1,:)=rs(1,:)*cos(ang/180*pi)+rs(2,:)*sin(ang/180*pi);
+rs2(2,:)=-rs(1,:)*sin(ang/180*pi)+rs(2,:)*cos(ang/180*pi);
+rs2(3,:)=rs(3,:);
+rs2(4,:)=1;
+ks2=Anor(1:3,1:3,coilposid)*ks;
+rs2=Anor(1:3,1:4,coilposid)*rs2;
+
+%run direct code and compute average along that
+rv=(p(:,te2p(1,:))+p(:,te2p(2,:))+p(:,te2p(3,:))+p(:,te2p(4,:)))/4;
+[Edirect]=runcodekstensor(te2p,p,conductivity,rs2,ks2,rv,FEMord);%generates Efield at ro1
+
+p=p';te2p=te2p';
+a=p(te2p(:,4),:)-p(te2p(:,1),:);
+b=p(te2p(:,3),:)-p(te2p(:,1),:);
+c=p(te2p(:,2),:)-p(te2p(:,1),:);
+V = abs(1/6 * dot(a', cross(b',c')));
+p=p';te2p=te2p';
+E_direct=dadt*Edirect(2,teid)*V(teid)'/sum(V(teid))
+E_adm=E_aux(I(coilposid),coilposid)
+
+%% E-field magnitude approximation example of ADM
+[tri,pp,E_aux,Anor]=genrecipmapxyzks(te2p,p,conductivity,teid,rs,ks,dadt,scth,th_hair,N,FEMord);
+Emagapprox=sqrt(sum(E_aux.^2,3));
+%% plot results
+[Emag,I]=max(Emagapprox);
+trisurf(tri,pp(:,1),pp(:,2),pp(:,3),Emag,'edgealpha',0);
+nc=numel(pp)/3;
+Orientations=ones([3 nc]);
+Positions=ones([3 nc]);
+for i=1:nc
+Orientations(:,i)=Anor(1:3,1,i)*sin(I(i)*pi/180)+Anor(1:3,2,i)*cos(I(i)*pi/180);
+Positions(:,i)=Anor(1:3,4,i);
+
+end
+Orientations=Orientations';Positions=Positions';
+hold on
+quiver3(Positions(:,1),Positions(:,2),Positions(:,3),Orientations(:,1),Orientations(:,2),Orientations(:,3))
+axis equal
+legend('Average E-field magnitude approximation', 'Optimum coil orientation')
+%% direct magnitude note for this to work you need to have run direct code
+%choose scalp position from the patch in derived using ADM
+coilposid=4;
+ang=I(coilposid);
+%move coil to patch position using matrix Anor obtained from running ADM
+rs2(1,:)=rs(1,:)*cos(ang/180*pi)+rs(2,:)*sin(ang/180*pi);
+rs2(2,:)=-rs(1,:)*sin(ang/180*pi)+rs(2,:)*cos(ang/180*pi);
+rs2(3,:)=rs(3,:);
+rs2(4,:)=1;
+ks2=Anor(1:3,1:3,coilposid)*ks;
+rs2=Anor(1:3,1:4,coilposid)*rs2;
+
+%run direct code and compute average along that
+rv=(p(:,te2p(1,:))+p(:,te2p(2,:))+p(:,te2p(3,:))+p(:,te2p(4,:)))/4;
+[Edirect]=runcodekstensor(te2p,p,conductivity,rs2,ks2,rv,FEMord);%generates Efield at ro1
+Emagdir=sqrt(sum(Edirect.^2,1));
+p=p';te2p=te2p';
+a=p(te2p(:,4),:)-p(te2p(:,1),:);
+b=p(te2p(:,3),:)-p(te2p(:,1),:);
+c=p(te2p(:,2),:)-p(te2p(:,1),:);
+V = abs(1/6 * dot(a', cross(b',c')));
+p=p';te2p=te2p';
+E_direct=dadt*sum(Emagdir(teid).*V(teid))/sum(V(teid))
+E_adm=Emagapprox(I(coilposid),coilposid)
+
+%% Uncertainty quantification using ADM
+posuq=.01;
+anguq=10;
+[tri,pp,Eaux_expected,Eaux_stddev,Anor,UQkit,roicen]=genrecipmapksUQ(te2p,p,conductivity,teid,that,rs,ks,dadt,scth,th_hair,N,FEMord,posuq,anguq);
+
+%%plot results
+[Emag,I]=max(Eaux_expected);
+subplot(1,2,1),
+trisurf(tri,pp(:,1),pp(:,2),pp(:,3),Emag,'edgealpha',0);
+nc=numel(pp)/3;
+Orientations=ones([3 nc]);
+Positions=ones([3 nc]);
+for i=1:nc
+Orientations(:,i)=Anor(1:3,1,i)*sin(I(i)*pi/180)+Anor(1:3,2,i)*cos(I(i)*pi/180);
+Positions(:,i)=Anor(1:3,4,i);
+
+end
+Orientations=Orientations';Positions=Positions';
+hold on
+quiver3(Positions(:,1),Positions(:,2),Positions(:,3),Orientations(:,1),Orientations(:,2),Orientations(:,3))
+axis equal
+%legend('Expected value of the E-field', 'Optimum coil orientation')
+I2=I+(0:(numel(pp)/3-1))*360;
+subplot(1,2,2),trisurf(tri,pp(:,1),pp(:,2),pp(:,3),Eaux_stddev(I2),'edgealpha',0,'facecolor','interp');
+axis equal
